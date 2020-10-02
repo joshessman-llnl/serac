@@ -10,7 +10,7 @@
 
 if (ENABLE_GTEST)
 
-    set(test_dependencies physics coefficients axom mpi mfem gtest)
+    set(test_dependencies physics integrators coefficients axom mpi mfem gtest)
 
     set(solver_tests
         serac_dynamic_solver.cpp
@@ -20,7 +20,8 @@ if (ENABLE_GTEST)
         serac_thermal_structural_solver.cpp
         serac_dtor.cpp
         serac_boundary_cond.cpp
-        serac_mesh.cpp)
+        serac_mesh.cpp
+	serac_newmark_test.cpp)
 
     foreach(filename ${solver_tests})
         get_filename_component(test_name ${filename} NAME_WE)
