@@ -59,47 +59,73 @@ protected:
   std::shared_ptr<mfem::ParFiniteElementSpace> pfes_l2;
 };
 
-class SecondOrderResidual
-{
+/**
+   @brief A class to contain second order nonlinear residual information
+ */
+class SecondOrderResidual {
 public:
-  SecondOrderResidual(std::shared_ptr<mfem::ParFiniteElementSpace> pfes, mfem::Coefficient& density):
-    density_(density),
-    pfes_(pfes),
-    up_(new mfem::ParGridFunction(pfes.get()))
+  /**
+     @brief A class to contain second order nonlinear residual information
+
+     @param [in] pfes Reference to a shared memory pointer
+     @param [in] density Density of the material
+   */
+  SecondOrderResidual(std::shared_ptr<mfem::ParFiniteElementSpace> pfes, mfem::Coefficient& density)
+      : density_(density), pfes_(pfes), up_(new mfem::ParGridFunction(pfes.get()))
   {
     *up_ = 0.;
-    
-    mfem::Vector ones(pfes_->GetVDim());
-    ones           = 1.;
-    auto ones_coef          = std::make_shared<mfem::VectorConstantCoefficient>(ones);
-    auto inertial_coef = std::make_shared<mfem::ScalarVectorProductCoefficient>(density_, *ones_coef);
 
+    // Create mass integrator term for dynamic problem
     auto inertial_integrator = std::make_shared<mfem::VectorMassIntegrator>(density_);
     auto nonlinear_inertial_integrator =
-      std::make_shared<serac::BilinearToNonlinearFormIntegrator>(inertial_integrator);
+        std::make_shared<serac::BilinearToNonlinearFormIntegrator>(inertial_integrator);
+
     residual_int_.push_back(nonlinear_inertial_integrator);
   }
-  
-  void AddBilinearDomainIntegrator(std::unique_ptr<mfem::BilinearFormIntegrator> blfi)
+
+  /**
+     @brief Take in mfem::BilinearFormIntegrator, convert it to a nonlienarform, and save it into a list of integrators
+
+     @param [in] blfi For the time being we assume this bilinearform integrator is dependent on the displacement (u)
+   */
+  void addBilinearDomainIntegrator(std::unique_ptr<mfem::BilinearFormIntegrator> blfi)
   {
     auto shared_version = std::shared_ptr<mfem::BilinearFormIntegrator>(blfi.release());
     residual_int_u_.push_back(std::make_shared<serac::BilinearToNonlinearFormIntegrator>(shared_version));
   }
 
-  void AddLinearDomainIntegrator(std::unique_ptr<mfem::LinearFormIntegrator> lfi)
+  /**
+     @brief Take in a mfem::LinearFormIntegrator, convert it to a nonlinearform integrator, and save it to interal
+     residual integrator list for terms not dependent on u or v
+
+     @param [in] lfi LinearFormIntegrator to convert into a nonlinearform and.
+   */
+  void addLinearDomainIntegrator(std::unique_ptr<mfem::LinearFormIntegrator> lfi)
   {
     auto shared_version = std::shared_ptr<mfem::LinearFormIntegrator>(lfi.release());
     residual_int_.push_back(std::make_shared<serac::LinearToNonlinearFormIntegrator>(shared_version, pfes_));
   }
 
-  void AddNonlinearDomainIntegrator(std::unique_ptr<mfem::NonlinearFormIntegrator> nlfi)
+  /**
+     @brief Take in a mfem::NonlinearFormIntegratorand save it to interal residual integrator list for terms not
+     dependent on u or v
+
+     @param [in] nlfi LinearFormIntegrator to convert into a nonlinearform and.
+  */
+
+  void addNonlinearDomainIntegrator(std::unique_ptr<mfem::NonlinearFormIntegrator> nlfi)
   {
     auto shared_version = std::shared_ptr<mfem::NonlinearFormIntegrator>(nlfi.release());
     residual_int_.push_back(shared_version);
   }
 
-  // Set Essential Boundary Conditions
-  void SetBoundaryConditions(mfem::Array<int> local_tdofs, mfem::Vector vals)
+  /**
+     @brief Set boundary conditions for this operator
+
+     @param [in] local_tdofs local dofs corresponding to essential boundary conditions to set
+     @param [in] vals corresponding values of essential boundary conditions
+   */
+  void setBoundaryConditions(mfem::Array<int> local_tdofs, mfem::Vector vals)
   {
     MFEM_VERIFY(local_tdofs.Size() == vals.Size(), "Essential true dof size != val.Size()");
 
@@ -109,7 +135,13 @@ public:
     local_ess_tdofs_ = local_tdofs;
   }
 
-  void SolveResidual(mfem::ParNonlinearForm& R, mfem::ParGridFunction& sol_next) const
+  /**
+     @brief Solve nonlinear residual using newton's method
+
+     @param [in] R A prepared ParNonlienarForm that has been assembled and is ready to be solved
+     @param [in] sol_next The solution of the nonlinear residual. Currently it's assumped to be on one pargridfunction.
+   */
+  void solveResidual(mfem::ParNonlinearForm& R, mfem::ParGridFunction& sol_next) const
   {
     mfem::NewtonSolver newton_solver(pfes_->GetComm());
     mfem::GMRESSolver  solver(pfes_->GetComm());
@@ -127,45 +159,61 @@ public:
     sol_next = *Sol_next;
   }
 
-  const mfem::Array<int>& GetLocalTDofs() { return local_ess_tdofs_; }
+  /// A method to get the local boundary condition indices
+  const mfem::Array<int>& getLocalTDofs() { return local_ess_tdofs_; }
 
-  std::shared_ptr<mfem::ParFiniteElementSpace> GetParFESpace() { return pfes_; }
-  
-  // public member variables
-  
-  std::unique_ptr<mfem::ParGridFunction> up_;  //< holds essential boundary conditions
+  /// A method to get the finite element space corresponding to the solutions
+  std::shared_ptr<mfem::ParFiniteElementSpace> getParFESpace() { return pfes_; }
 
-  std::vector<std::shared_ptr<mfem::NonlinearFormIntegrator>> residual_int_u_;  //< dependent on u
-  std::vector<std::shared_ptr<mfem::NonlinearFormIntegrator>> residual_int_;    //< not dependent on u or v
-  
-private:
-  
-    mfem::Array<int> local_ess_tdofs_;  //< local true essential boundary conditions
-  std::shared_ptr<mfem::ParFiniteElementSpace> pfes_;  //< finite element space
-  mfem::Coefficient& density_;  //< density
-};
+  /// A method to get the boundary conditions corresponding to essential boundary conditions
+  mfem::ParGridFunction& getEssentialBCValues() { return *up_; }
 
-class NewmarkBetaSecondOrder : public mfem::SecondOrderTimeDependentOperator {
-public:
-  NewmarkBetaSecondOrder(std::shared_ptr<SecondOrderResidual> residual, double beta,
-                         double gamma)
-      : beta_(beta),
-        gamma_(gamma),
-        offsets_(4),
-	pfes_(residual->GetParFESpace()),
-	residual_(residual)
+  /// A method to get the list of nonlinearform integrators dependent on the displacement (u)
+  std::vector<std::shared_ptr<mfem::NonlinearFormIntegrator>> const& getResidualIntegratorsU()
   {
-    // Create offsets to parse the input vector as a blockvector
-    offsets_[0] = 0;
-    offsets_[1] = offsets_[0] + pfes_->GetVSize();
-    offsets_[2] = offsets_[1] + pfes_->GetVSize();
-    offsets_[3] = offsets_[2] + pfes_->GetVSize();
-
+    return residual_int_u_;
   }
 
+  /// A method to get the list of nonlinearform integrators independent of u, v
+  std::vector<std::shared_ptr<mfem::NonlinearFormIntegrator>> const& getResidualIntegrators() { return residual_int_; }
 
-  /// NewmarkBeta uses this to get the initial acceleration
-  // It's assumed that x, dxdt, and y have the same size
+private:
+  std::vector<std::shared_ptr<mfem::NonlinearFormIntegrator>> residual_int_u_;  //< dependent on u
+  std::vector<std::shared_ptr<mfem::NonlinearFormIntegrator>> residual_int_;    //< not dependent on u or v
+
+  std::unique_ptr<mfem::ParGridFunction> up_;  //< holds essential boundary conditions
+
+  mfem::Array<int>                             local_ess_tdofs_;  //< local true essential boundary conditions
+  std::shared_ptr<mfem::ParFiniteElementSpace> pfes_;             //< finite element space
+  mfem::Coefficient&                           density_;          //< density
+};
+
+/**
+   @brief A SecondOrderTimeDependentOperator that implements the newmark beta time-stepping scheme
+ */
+class NewmarkBetaSecondOrder : public mfem::SecondOrderTimeDependentOperator {
+public:
+  /**
+     @brief  A SecondOrderTimeDependentOperator that implements the newmark beta time-stepping scheme
+
+     @param [in] residual A SecondOrderResidual
+     @param [in] beta The beta parameter
+     @param [in] gamma The gamma parameter
+   */
+  NewmarkBetaSecondOrder(std::shared_ptr<SecondOrderResidual> residual, double beta, double gamma)
+      : beta_(beta), gamma_(gamma), pfes_(residual->getParFESpace()), residual_(residual)
+  {
+  }
+
+  /**
+     @brief This "explicit" method is used by the NewmarkSolver to get the initial acceleration at timestep = 0.
+
+     The mfem::NewmarkSolver assumes that x, dxdt, and y have the same size
+
+     @param [in] x The "displacement" solution at t
+     @param [in] dxdt The "velocity" solution at t
+     @param [out] y The "acceleration" solution at t
+  */
   virtual void Mult(const mfem::Vector& x, const mfem::Vector& dxdt, mfem::Vector& y) const override
   {
     // convert x, dxdt, and y into ParGridFunctions
@@ -194,40 +242,60 @@ public:
       return ret_vect;
     };
 
+    // Create and assemble the nonlinearform. We want to solve R(a) = 0
     mfem::ParNonlinearForm R(pfes_.get());
-    for (auto integ : residual_->residual_int_) R.AddDomainIntegrator(new serac::PointerNonlinearFormIntegrator(integ));
 
-    for (auto integ : residual_->residual_int_u_) {
+    // Loop over and add nonlinearintegrators independent of u.
+    for (auto integ : residual_->getResidualIntegrators())
+      R.AddDomainIntegrator(new serac::PointerNonlinearFormIntegrator(integ));
+
+    // Loop over and add nonlinearintegrators dependent on u. Perform change of variables from u to a.
+    for (auto integ : residual_->getResidualIntegratorsU()) {
       auto sub_non_integ =
           std::make_shared<serac::SubstitutionNonlinearFormIntegrator>(integ, substitute_u0, zero_grad);
       R.AddDomainIntegrator(new serac::PointerNonlinearFormIntegrator(sub_non_integ));
     }
 
     a0 = 0.;
-    residual_->SolveResidual(R, a0);
+
+    // Solve the residual for a(t)
+    residual_->solveResidual(R, a0);
   }
 
+  /**
+     @brief This implicit method is used by the NewmarkSolver to perform time integration
+
+     @param [in] dt1 This term is equiavelent to dt * gamma
+     @param [in] x The "displacement" predictor at (t+dt)
+     @param [in] dxdt The "velocity" predictor at (t+dt)
+     @param [out] k The "acceleration" solution at the next time step (t+dt)
+   */
   virtual void ImplicitSolve(const double, const double dt1, const mfem::Vector& x, const mfem::Vector& dxdt,
                              mfem::Vector& k) override
   {
     // x is already x_pred
     // dxdt is already dxdt_pred
-    double dt = dt1 / gamma_;
+    double dt = dt1 / gamma_;  // back out dt from dt1
 
     mfem::ParGridFunction u_pred(pfes_.get());
-    u_pred.SetFromTrueDofs(x);
     mfem::ParGridFunction v_pred(pfes_.get());
-    v_pred.SetFromTrueDofs(dxdt);
     mfem::ParGridFunction a_next(pfes_.get());
+    u_pred.SetFromTrueDofs(x);
+    v_pred.SetFromTrueDofs(dxdt);
     a_next.SetFromTrueDofs(k);
     a_next = 0.;
+
     mfem::ParGridFunction u_next(pfes_.get());
 
-    // Currently u_next = u_pred, v_next = v_pred
-    // u_next(a_next) = u_pred + beta * dt * dt   * a_next
+    // The NewmarkBeta scheme is:
+    // u_next(a_next) = u_pred + beta * dt * dt * a_next
     // v_next(a_next) = v_pred + gamma * dt * a_next
     // a_next(u_next) = (u_next - u_pred)/(beta * dt * dt)
 
+    // Create functions to perform change of variables in terms of u, a(u) for the residual evaluation and for the
+    // gradient of the residual term
+
+    // da_next(u_next)/du_next = 1/ (beta * dt * dt)
     double dadu = 1. / (beta_ * dt * dt);
 
     auto substitute_a_next = [&](const mfem::FiniteElement&, mfem::ElementTransformation& Tr,
@@ -243,7 +311,6 @@ public:
       return a_next_vect;
     };
 
-    // du_next(a_next)/da_next = beta * dt * dt
     auto substitute_a_next_grad = [&](const mfem::FiniteElement&, mfem::ElementTransformation&,
                                       const mfem::DenseMatrix& elmat) {
       auto m = std::make_shared<mfem::DenseMatrix>(elmat);
@@ -251,37 +318,40 @@ public:
       return m;
     };
 
+    // Create and assemble the nonlinearform. We want to solve R(u) = 0
     mfem::ParNonlinearForm R(pfes_.get());
 
-    for (auto integ : residual_->residual_int_) {
+    // Loop over and add nonlinearintegrators. Perform change of variables from a to u.
+    for (auto integ : residual_->getResidualIntegrators()) {
       auto sub_non_integ = std::make_shared<serac::SubstitutionNonlinearFormIntegrator>(integ, substitute_a_next,
                                                                                         substitute_a_next_grad);
 
       R.AddDomainIntegrator(new serac::PointerNonlinearFormIntegrator(sub_non_integ));
     }
 
-    for (auto integ : residual_->residual_int_u_) {
+    // Loop over and add nonlinearintegrators dependent on u.
+    for (auto integ : residual_->getResidualIntegratorsU()) {
       R.AddDomainIntegrator(new serac::PointerNonlinearFormIntegrator(integ));
     }
 
-    R.SetEssentialTrueDofs(residual_->GetLocalTDofs());
+    // Set boundary condition indices
+    R.SetEssentialTrueDofs(residual_->getLocalTDofs());
 
-    u_next = *residual_->up_;
+    // Set boundary condition values
+    u_next = residual_->getEssentialBCValues();
 
-    residual_->SolveResidual(R, u_next);
+    // Solve R(u) = 0 to get u(t+dt)
+    residual_->solveResidual(R, u_next);
+
+    // Update a(t+dt) from u(t+dt)
     evaluate(dadu * (u_next - u_pred), a_next);
-
     a_next.GetTrueDofs(k);
   }
 
-
 private:
-  std::shared_ptr<mfem::ParFiniteElementSpace> pfes_; // reference to finite element space to solution
-  std::shared_ptr<SecondOrderResidual> residual_; // holds the residual
-  double beta_, gamma_;  //< Newmark parameters
-
-  mfem::Array<int>   offsets_;  //< local block offsets
-
+  std::shared_ptr<mfem::ParFiniteElementSpace> pfes_;          // reference to finite element space to solution
+  std::shared_ptr<SecondOrderResidual>         residual_;      // holds the residual
+  double                                       beta_, gamma_;  //< Newmark parameters
 };
 
 TEST_F(NewmarkBetaTest, Simple)
@@ -291,7 +361,7 @@ TEST_F(NewmarkBetaTest, Simple)
 
   mfem::ConstantCoefficient rho(1.0);
 
-  auto residual = std::make_shared<SecondOrderResidual>(pfes_v, rho);
+  auto                   residual = std::make_shared<SecondOrderResidual>(pfes_v, rho);
   NewmarkBetaSecondOrder second_order(residual, beta, gamma);
   mfem::NewmarkSolver    ns(beta, gamma);
   ns.Init(second_order);
@@ -393,16 +463,15 @@ TEST_F(NewmarkBetaTest, Equilibrium)
   double gamma = 0.5;  // 0.5
 
   mfem::ConstantCoefficient rho(r);
-  auto residual = std::make_shared<SecondOrderResidual>(pfes_v, rho);
+  auto                      residual = std::make_shared<SecondOrderResidual>(pfes_v, rho);
   NewmarkBetaSecondOrder    second_order(residual, beta, gamma);
   mfem::NewmarkSolver       ns(beta, gamma);
   ns.Init(second_order);
 
-  mfem::Array<int> offsets(4);
+  mfem::Array<int> offsets(3);
   offsets[0] = 0;
   offsets[1] = offsets[0] + pfes_v->GetVSize();
   offsets[2] = offsets[1] + pfes_v->GetVSize();
-  offsets[3] = offsets[2] + pfes_v->GetVSize();
 
   // u(0) = no displacements
   mfem::BlockVector     x0(offsets);
@@ -415,11 +484,8 @@ TEST_F(NewmarkBetaTest, Equilibrium)
   x0.GetBlock(0) = u0;
   x0.GetBlock(1) = v0;
 
-  // Domain is not accelerating at t=0
-  x0.GetBlock(2) = 0.;
-
   // Fix x = 0
-  int ne = nex;
+  int                           ne = nex;
   serac::StdFunctionCoefficient fixed([ne](mfem::Vector& x) { return (x[0] < 1. / ne) ? 1. : 0.; });
 
   mfem::Array<int> bdr_attr_list = serac::makeBdrAttributeList(*pmesh, fixed);
@@ -438,7 +504,7 @@ TEST_F(NewmarkBetaTest, Equilibrium)
   mfem::Vector u_ess(ess_tdof_list.Size());
   u_ess = 0.;
 
-  residual->SetBoundaryConditions(ess_tdof_list, u_ess);
+  residual->setBoundaryConditions(ess_tdof_list, u_ess);
 
   // Add self-weight
   mfem::Vector grav(dim);
@@ -448,13 +514,13 @@ TEST_F(NewmarkBetaTest, Equilibrium)
   // Here rho is the actually rho = rho_const * vf
   mfem::ScalarVectorProductCoefficient gravity_load_coef(rho, grav_v_coef);
   auto                                 gravity2 = std::make_unique<mfem::VectorDomainLFIntegrator>(gravity_load_coef);
-  residual->AddLinearDomainIntegrator(std::move(gravity2));
+  residual->addLinearDomainIntegrator(std::move(gravity2));
 
   // Make it non rigid body
   mfem::ConstantCoefficient lambda(lambda_c);
   mfem::ConstantCoefficient mu(mu_c);
   auto                      elasticity2 = std::make_unique<mfem::ElasticityIntegrator>(lambda, mu);
-  residual->AddBilinearDomainIntegrator(std::move(elasticity2));
+  residual->addBilinearDomainIntegrator(std::move(elasticity2));
 
   cout << "output volume fractions :" << endl;
 
@@ -467,25 +533,17 @@ TEST_F(NewmarkBetaTest, Equilibrium)
   std::cout << "t = " << t << std::endl;
 
   // Store results
-  mfem::Vector u_prev(x0.GetBlock(0));
-  mfem::Vector v_prev(x0.GetBlock(1));
-  mfem::Vector a_prev(x0.GetBlock(2));
-
   mfem::Vector u_next(x0.GetBlock(0));
   mfem::Vector v_next(x0.GetBlock(1));
-  mfem::Vector a_next(x0.GetBlock(2));
 
   mfem::ParGridFunction u_visit(pfes_v.get());
-  u_visit = u_next;
   mfem::ParGridFunction v_visit(pfes_v.get());
+  u_visit = u_next;
   v_visit = v_next;
-  mfem::ParGridFunction a_visit(pfes_v.get());
-  a_visit = a_next;
 
   mfem::VisItDataCollection visit("NewmarkBeta", pmesh.get());
   visit.RegisterField("u_next", &u_visit);
   visit.RegisterField("v_next", &v_visit);
-  visit.RegisterField("a_next", &a_visit);
   visit.SetCycle(0);
   visit.SetTime(0.);
   visit.Save();
@@ -493,47 +551,62 @@ TEST_F(NewmarkBetaTest, Equilibrium)
   for (int i = 0; i < num_time_steps; i++) {
     ns.Step(x0.GetBlock(0), x0.GetBlock(1), t, dt);
     u_visit = x0.GetBlock(0);
-    a_visit = x0.GetBlock(2);
+    v_visit = x0.GetBlock(1);
     visit.SetTime(t);
     visit.SetCycle(i + 1);
     visit.Save();
   }
 }
 
+/**
+   @brief A mfem::TimeDependentOperator that can take a SecondOrderResidual and recast it as a first order system
+ */
 class FirstOrderSystem : public mfem::TimeDependentOperator {
 public:
+  /**
+   @brief A mfem::TimeDependentOperator that can take a SecondOrderResidual and recast it as a first order system
+
+   @param [in] residual The second order residual to solve and integrate
+
+  */
   FirstOrderSystem(std::shared_ptr<SecondOrderResidual> residual)
-      : mfem::TimeDependentOperator(residual->GetParFESpace()->GetTrueVSize() * 2, 0.,
+      : mfem::TimeDependentOperator(residual->getParFESpace()->GetTrueVSize() * 2, 0.,
                                     mfem::TimeDependentOperator::Type::IMPLICIT),
-    offsets_(3),
-    pfes_(residual->GetParFESpace()),
-    residual_(residual)
+        offsets_(3),
+        pfes_(residual->getParFESpace()),
+        residual_(residual)
   {
     offsets_[0] = 0;
     offsets_[1] = offsets_[0] + pfes_->GetTrueVSize();
     offsets_[2] = offsets_[1] + pfes_->GetTrueVSize();
   }
 
+  /// The explicit implementation of this time dependent operator
   virtual void Mult(const mfem::Vector&, mfem::Vector&) const
   {
     mfem::mfem_error("not currently supported for this second order wrapper");
   };
 
+  /**
+     @brief The implicit time stepping solve for the recast Second Order Residual as a first order system
+
+     @param[in] dt The current time step.
+     @param[in] x The solution at time t
+     @param[out] k The rate at time (t+dt)
+   */
   virtual void ImplicitSolve(const double dt, const mfem::Vector& x, mfem::Vector& k) override
   {
     MFEM_VERIFY(x.Size() == offsets_[2], "vectors are not the same size");
     mfem::BlockVector bx(x.GetData(), offsets_);
 
-    /*
-      NewmarkBetaSecondOrder has a SolveResidual routine that currently updates u(next(a) based on an internal update
-      function
-
+    /* A second order p.d.e can be recast as a first order system
       u_next = u_prev + dt * v_next
       v_next = v_prev + dt * a_next
+
+      Thie means:
       u_next = u_prev + dt * (v_prev + dt * a_next);
       u_next = u_prev + dt * v_prev + dt*dt*a_next
       a_next(u_next) = (u_next - u_prev - dt * v_prev)/(dt*dt)
-
     */
 
     mfem::ParGridFunction u_prev(pfes_.get());
@@ -542,18 +615,22 @@ public:
     v_prev.SetFromTrueDofs(bx.GetBlock(1));
 
     mfem::ParGridFunction a_next(pfes_.get());
-    a_next = 0.;
     mfem::ParGridFunction u_next(pfes_.get());
+    a_next = 0.;
 
-    auto substitute_a = [&](const mfem::FiniteElement&, mfem::ElementTransformation& Tr, const mfem::Vector& u_next_elem) {
+    // Create a function to perform a change of variables in terms of u,  a(u)
+    auto substitute_a = [&](const mfem::FiniteElement&, mfem::ElementTransformation& Tr,
+                            const mfem::Vector& u_next_elem) {
       auto                         a_next_elem = std::make_shared<mfem::Vector>(u_next_elem.Size());
-      int                          e      = Tr.ElementNo;
-      mfem::ParFiniteElementSpace* pfes   = u_prev.ParFESpace();
+      int                          e           = Tr.ElementNo;
+      mfem::ParFiniteElementSpace* pfes        = u_prev.ParFESpace();
       mfem::Array<int>             vdofs;
       pfes->GetElementVDofs(e, vdofs);
+
       mfem::Vector u_prev_elem(u_prev.Size());
-      u_prev.GetSubVector(vdofs, u_prev_elem);
       mfem::Vector v_prev_elem(u_prev.Size());
+
+      u_prev.GetSubVector(vdofs, u_prev_elem);
       v_prev.GetSubVector(vdofs, v_prev_elem);
 
       *a_next_elem = (u_next_elem - u_prev_elem - v_prev_elem * dt) / (dt * dt);
@@ -561,6 +638,7 @@ public:
       return a_next_elem;
     };
 
+    // Create a function to perform a change of variables a(u) for the gradient of the residual
     double dadu              = 1. / (dt * dt);
     auto   substitute_a_grad = [&](const mfem::FiniteElement&, mfem::ElementTransformation&,
                                  const mfem::DenseMatrix& elmat) {
@@ -569,23 +647,32 @@ public:
       return m;
     };
 
+    // Create and assemble the nonlinearform. We want to solve R(u) = 0
     mfem::ParNonlinearForm R(pfes_.get());
 
-    for (auto integ : residual_->residual_int_) {
+    // Loop over and add nonlinearintegrators. Perform change of variables to u.
+    for (auto integ : residual_->getResidualIntegrators()) {
       auto sub_non_integ =
           std::make_shared<serac::SubstitutionNonlinearFormIntegrator>(integ, substitute_a, substitute_a_grad);
 
       R.AddDomainIntegrator(new serac::PointerNonlinearFormIntegrator(sub_non_integ));
     }
 
-    for (auto integ : residual_->residual_int_u_) {
+    // Loop over and add nonlinearintegrators dependent on u.
+    for (auto integ : residual_->getResidualIntegratorsU()) {
       R.AddDomainIntegrator(new serac::PointerNonlinearFormIntegrator(integ));
     }
 
-    R.SetEssentialTrueDofs(residual_->GetLocalTDofs());
+    // Set boundary condition indices
+    R.SetEssentialTrueDofs(residual_->getLocalTDofs());
 
-    u_next = *residual_->up_;
-    residual_->SolveResidual(R, u_next);
+    // Set boundary condition values
+    u_next = residual_->getEssentialBCValues();
+
+    // Solve R(u) = 0 to get u(t+dt)
+    residual_->solveResidual(R, u_next);
+
+    // Update a(t+dt) from u(t+dt)
     evaluate(1. / (dt * dt) * (u_next - u_prev - dt * v_prev), a_next);
 
     // v_next = v_old + dt * a_next
@@ -598,15 +685,14 @@ public:
     a_next.GetTrueDofs(bk.GetBlock(1));
   }
 
-protected:
+private:
   std::shared_ptr<mfem::ParFiniteElementSpace> pfes_;
-  std::shared_ptr<SecondOrderResidual> residual_;
-  mfem::Array<int>                        offsets_;
+  std::shared_ptr<SecondOrderResidual>         residual_;
+  mfem::Array<int>                             offsets_;
 };
 
 TEST_F(NewmarkBetaTest, Equilibrium_firstorder)
 {
-
   // Problem parameters
   double E  = 17.e6;
   double nu = 0.3;
@@ -627,20 +713,15 @@ TEST_F(NewmarkBetaTest, Equilibrium_firstorder)
   double gamma = 1.;
 
   mfem::ConstantCoefficient rho(r);
-  auto residual = std::make_shared<SecondOrderResidual>(pfes_v, rho);
-  auto                      second_order = std::make_shared<NewmarkBetaSecondOrder>(residual, beta, gamma);
+  auto                      residual = std::make_shared<SecondOrderResidual>(pfes_v, rho);
   FirstOrderSystem          the_first_order(residual);
   mfem::BackwardEulerSolver be;
   be.Init(the_first_order);
 
-  mfem::NewmarkSolver ns(beta, gamma);
-  ns.Init(*second_order);
-
-  mfem::Array<int> offsets(4);
+  mfem::Array<int> offsets(3);
   offsets[0] = 0;
   offsets[1] = offsets[0] + pfes_v->GetVSize();
   offsets[2] = offsets[1] + pfes_v->GetVSize();
-  offsets[3] = offsets[2] + pfes_v->GetVSize();
 
   // u(0) = no displacements
   mfem::BlockVector     x0(offsets);
@@ -676,7 +757,7 @@ TEST_F(NewmarkBetaTest, Equilibrium_firstorder)
   mfem::Vector u_ess(ess_tdof_list.Size());
   u_ess = 0.;
 
-  residual->SetBoundaryConditions(ess_tdof_list, u_ess);
+  residual->setBoundaryConditions(ess_tdof_list, u_ess);
 
   // Add self-weight
   mfem::Vector grav(dim);
@@ -686,13 +767,13 @@ TEST_F(NewmarkBetaTest, Equilibrium_firstorder)
   // Here rho is the actually rho = rho_const * vf
   mfem::ScalarVectorProductCoefficient gravity_load_coef(rho, grav_v_coef);
   auto                                 gravity2 = std::make_unique<mfem::VectorDomainLFIntegrator>(gravity_load_coef);
-  residual->AddLinearDomainIntegrator(std::move(gravity2));
+  residual->addLinearDomainIntegrator(std::move(gravity2));
 
   // Make it non rigid body
   mfem::ConstantCoefficient lambda(lambda_c);
   mfem::ConstantCoefficient mu(mu_c);
   auto                      elasticity2 = std::make_unique<mfem::ElasticityIntegrator>(lambda, mu);
-  residual->AddBilinearDomainIntegrator(std::move(elasticity2));
+  residual->addBilinearDomainIntegrator(std::move(elasticity2));
 
   cout << "output volume fractions :" << endl;
 
@@ -705,20 +786,13 @@ TEST_F(NewmarkBetaTest, Equilibrium_firstorder)
   std::cout << "t = " << t << std::endl;
 
   // Store results
-  mfem::Vector u_prev(x0.GetBlock(0));
-  mfem::Vector v_prev(x0.GetBlock(1));
-  mfem::Vector a_prev(x0.GetBlock(2));
-
   mfem::Vector u_next(x0.GetBlock(0));
   mfem::Vector v_next(x0.GetBlock(1));
-  mfem::Vector a_next(x0.GetBlock(2));
 
   mfem::ParGridFunction u_visit(pfes_v.get());
-  u_visit = u_next;
   mfem::ParGridFunction v_visit(pfes_v.get());
+  u_visit = u_next;
   v_visit = v_next;
-  mfem::ParGridFunction a_visit(pfes_v.get());
-  a_visit = a_next;
 
   mfem::VisItDataCollection visit("FirstOrder", pmesh.get());
   visit.RegisterField("u_next", &u_visit);
@@ -726,8 +800,6 @@ TEST_F(NewmarkBetaTest, Equilibrium_firstorder)
   visit.SetCycle(0);
   visit.SetTime(0.);
   visit.Save();
-
-  mfem::BlockVector x0_copy(x0);
 
   for (int i = 0; i < num_time_steps; i++) {
     mfem::Vector x0_temp(x0.GetData(), offsets[2]);
